@@ -29,6 +29,7 @@
 	"engines": {
 		"node": ">=18.0.0"
 	},
+	"packageManager": "pnpm@10.29.1",
 	"scripts": {
 		"build": "tsdown",
 		"postbuild": "chmod +x dist/cli.cjs",
@@ -40,7 +41,8 @@
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"typecheck": "tsc --noEmit",
-		"prepublishOnly": "pnpm build && pnpm test"
+		"prepublishOnly": "pnpm build && pnpm test",
+		"prepare": "husky"
 	},
 	"keywords": [
 		"zod",
@@ -69,11 +71,14 @@
 		"@eslint/js": "^9.18.0",
 		"@types/node": "^20.0.0",
 		"eslint": "^9.18.0",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-prettier": "^5.5.0",
+		"husky": "^9.1.7",
 		"prettier": "^3.4.2",
 		"tsdown": "^0.22.0",
 		"typescript": "^5.4.0",
-		"unrun": "^0.3.0",
 		"typescript-eslint": "^8.0.0",
+		"unrun": "^0.3.0",
 		"vitest": "^1.6.0",
 		"zod": "^3.22.0"
 	}
