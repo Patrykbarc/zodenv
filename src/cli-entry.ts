@@ -23,7 +23,7 @@ const main = async (): Promise<void> => {
 		parsed = parseCliArgs(process.argv.slice(2));
 	} catch (err) {
 		console.error((err as Error).message);
-		console.error("\nRun `zodenv --help` for usage.");
+		console.error("\nRun `zodenvy --help` for usage.");
 		process.exit(1);
 	}
 
