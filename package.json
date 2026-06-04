@@ -1,6 +1,6 @@
 {
 	"name": "zodenvy",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Generate type-safe, Zod-validated TypeScript schemas from your .env. CLI that produces autocomplete, runtime validation, and a synced .env.template.",
 	"type": "module",
 	"bin": {

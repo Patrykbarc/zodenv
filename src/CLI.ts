@@ -12,6 +12,14 @@ import { parseArgs } from "util";
 import type { EnvParser } from "./EnvParser.js";
 import type { TemplateSync } from "./TemplateSync.js";
 import { CodeGenerator, type GeneratorOptions } from "./CodeGenerator.js";
+import {
+	BUILT_IN_ADAPTERS,
+	detectAdapter,
+	resolveAdapter,
+	nodeAdapter,
+	viteAdapter,
+} from "./adapters/index.js";
+import type { Adapter, AdapterName, PackageJsonLike } from "./adapters/types.js";
 
 const IGNORED_DIRS = new Set([
 	"node_modules",
@@ -23,14 +31,14 @@ const IGNORED_DIRS = new Set([
 	"coverage",
 ]);
 
-const IMPORT_META_DEPS = ["astro", "vite"];
-
 export type EnvSourceOption = "auto" | "process.env" | "import.meta.env";
+export type FrameworkOption = "auto" | AdapterName;
 
 export interface CliOptions {
 	outDir: string;
 	outFile: string;
 	envSource: EnvSourceOption;
+	framework: FrameworkOption;
 	typeName: string;
 	recursive: boolean;
 	envFile?: string;
@@ -40,6 +48,7 @@ export const DEFAULT_OPTIONS: CliOptions = {
 	outDir: "src/constants",
 	outFile: "env.generated.ts",
 	envSource: "auto",
+	framework: "auto",
 	typeName: "EnvironmentVariables",
 	recursive: false,
 };
@@ -50,6 +59,8 @@ export interface ParsedCli {
 	showVersion: boolean;
 }
 
+const VALID_FRAMEWORKS: readonly string[] = ["auto", ...Object.keys(BUILT_IN_ADAPTERS)];
+
 export function parseCliArgs(argv: string[]): ParsedCli {
 	const { values } = parseArgs({
 		args: argv,
@@ -57,6 +68,7 @@ export function parseCliArgs(argv: string[]): ParsedCli {
 			"out-dir": { type: "string" },
 			"out-file": { type: "string" },
 			"env-source": { type: "string" },
+			framework: { type: "string" },
 			"type-name": { type: "string" },
 			recursive: { type: "boolean", short: "r" },
 			"env-file": { type: "string" },
@@ -79,10 +91,18 @@ export function parseCliArgs(argv: string[]): ParsedCli {
 		);
 	}
 
+	const framework = values.framework as string | undefined;
+	if (framework && !VALID_FRAMEWORKS.includes(framework)) {
+		throw new Error(
+			`Invalid --framework value: "${framework}". Expected one of: ${VALID_FRAMEWORKS.join(", ")}`,
+		);
+	}
+
 	const options: CliOptions = {
 		outDir: (values["out-dir"] as string | undefined) ?? DEFAULT_OPTIONS.outDir,
 		outFile: (values["out-file"] as string | undefined) ?? DEFAULT_OPTIONS.outFile,
 		envSource: (envSource as EnvSourceOption | undefined) ?? DEFAULT_OPTIONS.envSource,
+		framework: (framework as FrameworkOption | undefined) ?? DEFAULT_OPTIONS.framework,
 		typeName: (values["type-name"] as string | undefined) ?? DEFAULT_OPTIONS.typeName,
 		recursive: Boolean(values.recursive),
 		envFile: values["env-file"] as string | undefined,
@@ -103,7 +123,8 @@ Generate a typed, Zod-validated TypeScript file from your .env, and keep
 Options:
   --out-dir <dir>          Output directory (default: src/constants)
   --out-file <file>        Output filename (default: env.generated.ts)
-  --env-source <source>    auto | process.env | import.meta.env (default: auto)
+  --framework <name>       auto | node | next | vite | astro | cloudflare | deno | bun (default: auto)
+  --env-source <source>    auto | process.env | import.meta.env (legacy override, default: auto)
   --type-name <name>       Exported type name (default: EnvironmentVariables)
   --env-file <path>        Path to .env file (default: ./.env)
   -r, --recursive          Recursively scan for every .env under a src/ folder
@@ -112,8 +133,8 @@ Options:
 
 Examples:
   zodenvy
-  zodenvy --out-dir src/env --out-file schema.ts
-  zodenvy --env-source import.meta.env --type-name Env
+  zodenvy --framework next
+  zodenvy --framework cloudflare --out-dir src/env
   zodenvy --recursive
 `;
 
@@ -174,13 +195,15 @@ export class CLI {
 
 	private processEnvFile(envPath: string, cwd: string): void {
 		const pkgDir = dirname(envPath);
-		const envSource =
-			this.options.envSource === "auto" ? this.detectEnvSource(pkgDir) : this.options.envSource;
+		const adapter = this.resolveAdapter(pkgDir);
 
 		const generatorOptions: GeneratorOptions = {
-			envSource,
+			envSource: adapter.envAccessor("X").startsWith("import.meta.env")
+				? "import.meta.env"
+				: "process.env",
 			typeName: this.options.typeName,
 			generateGetEnvs: true,
+			adapter,
 		};
 
 		const { entries } = this.parser.parseFile(envPath);
@@ -203,7 +226,29 @@ export class CLI {
 		const label = relative(cwd, pkgDir) || ".";
 		const counts = `+${syncResult.added.length} / -${syncResult.removed.length}`;
 		const outLabel = `${this.options.outDir}/${this.options.outFile}`;
-		console.log(`✅ ${label} (${envSource}) → ${outLabel} (${counts})`);
+		console.log(`✅ ${label} (${adapter.name}) → ${outLabel} (${counts})`);
+	}
+
+	private resolveAdapter(pkgDir: string): Adapter {
+		if (this.options.framework !== "auto") {
+			return resolveAdapter(this.options.framework);
+		}
+
+		if (this.options.envSource === "process.env") return nodeAdapter;
+		if (this.options.envSource === "import.meta.env") return viteAdapter;
+
+		const pkg = this.readPackageJson(pkgDir);
+		return pkg ? detectAdapter(pkg) : nodeAdapter;
+	}
+
+	private readPackageJson(pkgDir: string): PackageJsonLike | null {
+		const pkgPath = join(pkgDir, "package.json");
+		if (!existsSync(pkgPath) || !statSync(pkgPath).isFile()) return null;
+		try {
+			return JSON.parse(readFileSync(pkgPath, "utf-8")) as PackageJsonLike;
+		} catch {
+			return null;
+		}
 	}
 
 	private findEnvFiles(root: string): string[] {
@@ -230,33 +275,5 @@ export class CLI {
 				results.push(fullPath);
 			}
 		}
-	}
-
-	private detectEnvSource(pkgDir: string): "process.env" | "import.meta.env" {
-		const pkgPath = join(pkgDir, "package.json");
-		if (!existsSync(pkgPath) || !statSync(pkgPath).isFile()) {
-			return "process.env";
-		}
-
-		let pkg: {
-			dependencies?: Record<string, string>;
-			devDependencies?: Record<string, string>;
-		};
-		try {
-			pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-		} catch {
-			return "process.env";
-		}
-
-		const allDeps = {
-			...(pkg.dependencies ?? {}),
-			...(pkg.devDependencies ?? {}),
-		};
-		for (const dep of Object.keys(allDeps)) {
-			if (IMPORT_META_DEPS.includes(dep) || dep.startsWith("@vitejs/")) {
-				return "import.meta.env";
-			}
-		}
-		return "process.env";
 	}
 }

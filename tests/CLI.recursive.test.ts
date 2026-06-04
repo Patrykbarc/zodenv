@@ -43,12 +43,15 @@ describe("CLI --recursive mode", () => {
 		await makeRecursiveCli().run(root);
 
 		const apiOut = readFileSync(join(root, "apps/api/src/constants/env.generated.ts"), "utf-8");
-		expect(apiOut).toContain("process.env[name]");
+		expect(apiOut).toContain("process.env.PORT");
+		expect(apiOut).toContain("process.env.DATABASE_URL");
+		expect(apiOut).not.toContain("process.env[name]");
 		expect(apiOut).toContain("'PORT'");
 		expect(apiOut).toContain("'DATABASE_URL'");
 
 		const webOut = readFileSync(join(root, "apps/web/src/constants/env.generated.ts"), "utf-8");
-		expect(webOut).toContain("import.meta.env[name]");
+		expect(webOut).toContain("import.meta.env.API_URL");
+		expect(webOut).not.toContain("import.meta.env[name]");
 		expect(webOut).toContain("'API_URL'");
 	});
 
@@ -100,7 +103,8 @@ describe("CLI --recursive mode", () => {
 		await makeRecursiveCli().run(root);
 
 		const out = readFileSync(join(root, "apps/vue-app/src/constants/env.generated.ts"), "utf-8");
-		expect(out).toContain("import.meta.env[name]");
+		expect(out).toContain("import.meta.env.API_URL");
+		expect(out).not.toContain("import.meta.env[name]");
 	});
 
 	it("respects custom --out-dir / --out-file / --type-name", async () => {
