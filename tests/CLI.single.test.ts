@@ -10,7 +10,7 @@ describe("CLI single-project mode (default)", () => {
 	let root: string;
 
 	beforeEach(() => {
-		root = mkdtempSync(join(tmpdir(), "zodenv-single-test-"));
+		root = mkdtempSync(join(tmpdir(), "zodenvy-single-test-"));
 	});
 
 	afterEach(() => {

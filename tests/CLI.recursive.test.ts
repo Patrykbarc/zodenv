@@ -23,7 +23,7 @@ describe("CLI --recursive mode", () => {
 	let root: string;
 
 	beforeEach(() => {
-		root = mkdtempSync(join(tmpdir(), "zodenv-recursive-test-"));
+		root = mkdtempSync(join(tmpdir(), "zodenvy-recursive-test-"));
 	});
 
 	afterEach(() => {
