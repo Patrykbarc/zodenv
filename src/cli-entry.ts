@@ -1,16 +1,19 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { EnvParser } from './EnvParser.js';
-import { TemplateSync } from './TemplateSync.js';
-import { CLI, HELP_TEXT, parseCliArgs } from './CLI.js';
+import { readFileSync } from "fs";
+import { join } from "path";
+import { EnvParser } from "./EnvParser.js";
+import { TemplateSync } from "./TemplateSync.js";
+import { CLI, HELP_TEXT, parseCliArgs } from "./CLI.js";
 
 const readVersion = (): string => {
 	try {
-		const pkgPath = join(__dirname, '..', 'package.json');
-		const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string };
-		return pkg.version ?? 'unknown';
+		const pkgPath = join(__dirname, "..", "package.json");
+		const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+			version?: string;
+		};
+
+		return pkg.version ?? "unknown";
 	} catch {
-		return 'unknown';
+		return "unknown";
 	}
 };
 
@@ -20,7 +23,7 @@ const main = async (): Promise<void> => {
 		parsed = parseCliArgs(process.argv.slice(2));
 	} catch (err) {
 		console.error((err as Error).message);
-		console.error('\nRun `zodenv --help` for usage.');
+		console.error("\nRun `zodenv --help` for usage.");
 		process.exit(1);
 	}
 
@@ -39,6 +42,6 @@ const main = async (): Promise<void> => {
 };
 
 main().catch((err: unknown) => {
-	console.error('Error:', err);
+	console.error("Error:", err);
 	process.exit(1);
 });

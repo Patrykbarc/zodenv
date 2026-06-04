@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import type { EnvEntry } from './EnvParser.js';
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import type { EnvEntry } from "./EnvParser.js";
 
 export interface SyncResult {
 	added: string[];
@@ -13,14 +13,14 @@ export class TemplateSync {
 
 		let templateLines: string[] = [];
 		if (existsSync(templatePath)) {
-			templateLines = readFileSync(templatePath, 'utf-8').split('\n');
+			templateLines = readFileSync(templatePath, "utf-8").split("\n");
 		}
 
 		const templateKeys = new Set<string>();
 		for (const line of templateLines) {
 			const trimmed = line.trim();
-			if (trimmed === '' || trimmed.startsWith('#')) continue;
-			const eqIndex = trimmed.indexOf('=');
+			if (trimmed === "" || trimmed.startsWith("#")) continue;
+			const eqIndex = trimmed.indexOf("=");
 			if (eqIndex !== -1) {
 				templateKeys.add(trimmed.slice(0, eqIndex).trim());
 			}
@@ -47,8 +47,8 @@ export class TemplateSync {
 
 		for (const line of templateLines) {
 			const trimmed = line.trim();
-			if (trimmed !== '' && !trimmed.startsWith('#')) {
-				const eqIndex = trimmed.indexOf('=');
+			if (trimmed !== "" && !trimmed.startsWith("#")) {
+				const eqIndex = trimmed.indexOf("=");
 				if (eqIndex !== -1) {
 					const key = trimmed.slice(0, eqIndex).trim();
 					if (!currentKeys.has(key)) continue; // remove it
@@ -63,8 +63,8 @@ export class TemplateSync {
 		}
 
 		// Remove trailing empty lines and add single newline
-		const content = newLines.join('\n').trimEnd() + '\n';
-		writeFileSync(templatePath, content, 'utf-8');
+		const content = newLines.join("\n").trimEnd() + "\n";
+		writeFileSync(templatePath, content, "utf-8");
 
 		return { added, removed };
 	}
