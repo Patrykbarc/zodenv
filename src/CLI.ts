@@ -95,7 +95,7 @@ export function parseCliArgs(argv: string[]): ParsedCli {
 	};
 }
 
-export const HELP_TEXT = `Usage: zodenv [options]
+export const HELP_TEXT = `Usage: zodenvy [options]
 
 Generate a typed, Zod-validated TypeScript file from your .env, and keep
 .env.template in sync.
@@ -111,10 +111,10 @@ Options:
   -v, --version            Show version
 
 Examples:
-  zodenv
-  zodenv --out-dir src/env --out-file schema.ts
-  zodenv --env-source import.meta.env --type-name Env
-  zodenv --recursive
+  zodenvy
+  zodenvy --out-dir src/env --out-file schema.ts
+  zodenvy --env-source import.meta.env --type-name Env
+  zodenvy --recursive
 `;
 
 export class CLI {

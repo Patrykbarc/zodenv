@@ -1,10 +1,10 @@
 {
-	"name": "zodenv",
+	"name": "zodenvy",
 	"version": "1.0.0",
 	"description": "Generate type-safe, Zod-validated TypeScript schemas from your .env. CLI that produces autocomplete, runtime validation, and a synced .env.template.",
 	"type": "module",
 	"bin": {
-		"zodenv": "./dist/cli.cjs"
+		"zodenvy": "./dist/cli.cjs"
 	},
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",
@@ -58,11 +58,11 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/patrykbarc/zodenv.git"
+		"url": "git+https://github.com/patrykbarc/zodenvy.git"
 	},
-	"homepage": "https://github.com/patrykbarc/zodenv#readme",
+	"homepage": "https://github.com/patrykbarc/zodenvy#readme",
 	"bugs": {
-		"url": "https://github.com/patrykbarc/zodenv/issues"
+		"url": "https://github.com/patrykbarc/zodenvy/issues"
 	},
 	"peerDependencies": {
 		"zod": ">=3.22.0"
