@@ -50,34 +50,50 @@ export const envSchema = z.object({
 export type EnvironmentVariables = z.infer<typeof envSchema>;
 
 export const getEnvs = (): EnvironmentVariables => {
-	const raw = Object.fromEntries(ENV_NAMES.map((name) => [name, process.env[name]]));
-	return envSchema.parse(raw);
+	return envSchema.parse({
+		API_URL: process.env.API_URL,
+		DB_PORT: process.env.DB_PORT,
+		DEBUG: process.env.DEBUG,
+		NODE_ENV: process.env.NODE_ENV,
+	});
 };
 ```
+
+The accessor uses **static literal** `process.env.FOO` reads (not a `process.env[name]` loop) so it works correctly with every bundler that statically inlines env vars — Webpack/Next.js DefinePlugin, Vite, esbuild, Rollup.
 
 …and a `.env.template` next to your `.env`, ready to commit.
 
 ## CLI options
 
-| Flag                 | Default                | Description                                                                   |
-| -------------------- | ---------------------- | ----------------------------------------------------------------------------- |
-| `--out-dir <dir>`    | `src/constants`        | Output directory (relative to the `.env` file, or absolute)                   |
-| `--out-file <file>`  | `env.generated.ts`     | Output filename                                                               |
-| `--env-source <s>`   | `auto`                 | `auto` \| `process.env` \| `import.meta.env`                                  |
-| `--type-name <name>` | `EnvironmentVariables` | Exported TypeScript type name                                                 |
-| `--env-file <path>`  | `./.env`               | Path to the `.env` file                                                       |
-| `-r`, `--recursive`  | `false`                | Walk the current directory tree and process every package's `.env` (monorepo) |
-| `-h`, `--help`       | —                      | Show usage                                                                    |
-| `-v`, `--version`    | —                      | Show installed version                                                        |
+| Flag                 | Default                | Description                                                                        |
+| -------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `--out-dir <dir>`    | `src/constants`        | Output directory (relative to the `.env` file, or absolute)                        |
+| `--out-file <file>`  | `env.generated.ts`     | Output filename                                                                    |
+| `--framework <name>` | `auto`                 | `auto` \| `node` \| `next` \| `vite` \| `astro` \| `cloudflare` \| `deno` \| `bun` |
+| `--env-source <s>`   | `auto`                 | Legacy: `auto` \| `process.env` \| `import.meta.env` (overrides framework)         |
+| `--type-name <name>` | `EnvironmentVariables` | Exported TypeScript type name                                                      |
+| `--env-file <path>`  | `./.env`               | Path to the `.env` file                                                            |
+| `-r`, `--recursive`  | `false`                | Walk the current directory tree and process every package's `.env` (monorepo)      |
+| `-h`, `--help`       | —                      | Show usage                                                                         |
+| `-v`, `--version`    | —                      | Show installed version                                                             |
 
-### `--env-source auto`
+### Framework support
 
-`auto` (the default) detects the runtime by reading the neighboring `package.json`:
+`--framework auto` (the default) inspects the neighboring `package.json` and picks an adapter:
 
-- depends on `astro`, `vite`, or any `@vitejs/*` → `import.meta.env`
-- otherwise → `process.env`
+| Adapter      | Detected by                                  | Accessor                   | Server/client split            |
+| ------------ | -------------------------------------------- | -------------------------- | ------------------------------ |
+| `next`       | `next` dependency                            | `process.env.FOO`          | `NEXT_PUBLIC_*` → public split |
+| `astro`      | `astro` dependency                           | `import.meta.env.FOO`      | `PUBLIC_*` → public split      |
+| `vite`       | `vite` / `@vitejs/*` dependency              | `import.meta.env.FOO`      | `VITE_*` → public split        |
+| `cloudflare` | `wrangler` / `@cloudflare/workers-types` dep | `env.FOO` (request-scoped) | factory: `createGetEnvs(env)`  |
+| `bun`        | `bun` / `bun-types` / `@types/bun` dep       | `Bun.env.FOO`              | —                              |
+| `deno`       | (explicit `--framework deno`)                | `Deno.env.get("FOO")`      | —                              |
+| `node`       | fallback                                     | `process.env.FOO`          | —                              |
 
-Override explicitly with `--env-source process.env` or `--env-source import.meta.env`.
+When an adapter has a **server/client split** (Next.js, Vite, Astro), the generated file additionally exports `publicEnvSchema`, `PublicEnvironmentVariables`, and `getPublicEnvs()` — a subset containing only variables whose name starts with the framework's public prefix. Import `getPublicEnvs()` in client code, `getEnvs()` on the server.
+
+Override the framework explicitly with `--framework next` (or any name above). The legacy `--env-source` flag still works and takes precedence — handy if you have an old config you don't want to touch.
 
 ## Annotations
 
@@ -124,18 +140,55 @@ const env = getEnvs();
 console.log(env.DB_PORT); // number
 ```
 
-### Option B — `createGetEnvs` factory
+### Next.js: server vs client
 
-When you don't want the generated file to import from this package at runtime, use the factory:
+With `--framework next` the generated file exports both `getEnvs` (full schema, server-only) and `getPublicEnvs` (only `NEXT_PUBLIC_*` vars, safe to call in the browser):
+
+```typescript
+// app/page.tsx (Server Component) — full env
+import { getEnvs } from "@/constants/env.generated";
+const env = getEnvs();
+fetch(`${env.API_URL}/data`, { headers: { Authorization: env.DB_PASSWORD } });
+
+// app/header.tsx ("use client") — only public env
+("use client");
+import { getPublicEnvs } from "@/constants/env.generated";
+const publicEnv = getPublicEnvs();
+console.log(publicEnv.NEXT_PUBLIC_API_URL);
+```
+
+Because the generated accessor uses static `process.env.NEXT_PUBLIC_FOO` reads (not a dynamic loop), Next.js's webpack DefinePlugin inlines the values at build time and the client bundle gets real strings — no more `undefined`.
+
+### Cloudflare Workers — request-scoped env
+
+With `--framework cloudflare` the generated file exports a `createGetEnvs` factory instead, because Workers receive env from the request context:
+
+```typescript
+// src/index.ts
+import { createGetEnvs } from "./constants/env.generated";
+
+export default {
+	async fetch(req: Request, env: Env) {
+		const envs = createGetEnvs(env as Record<string, string | undefined>)();
+		return new Response(envs.API_URL);
+	},
+};
+```
+
+### Option B — `createGetEnvs` factory (any runtime)
+
+For any runtime where the built-in adapters don't fit (Deno without `--framework deno`, an embedded engine, a test harness), import the runtime factory and pass your own env source:
 
 ```typescript
 import { createGetEnvs } from "zodenvy";
 import { envSchema } from "./constants/env.generated";
 
 export const getEnvs = createGetEnvs(envSchema, import.meta.env);
+// or: createGetEnvs(envSchema, Deno.env.toObject())
+// or: createGetEnvs(envSchema, request.env)
 ```
 
-`createGetEnvs` parses and validates on the first call, then returns the cached result.
+`createGetEnvs` parses and validates on the first call, then returns the cached result. It accepts **any `Record<string, string | undefined>`** as the source — fully framework-agnostic.
 
 ## `.env.template` sync
 
@@ -163,16 +216,27 @@ Ignored: `node_modules`, `dist`, `build`, `.git`, `.next`, `.turbo`, `coverage`,
 
 ## Programmatic API
 
-`zodenvy` also exports the building blocks if you want to script your own pipeline:
+`zodenvy` also exports the building blocks if you want to script your own pipeline or build a custom framework adapter:
 
 ```typescript
-import { EnvParser, CodeGenerator, TemplateSync, createGetEnvs } from "zodenvy";
+import {
+	EnvParser,
+	CodeGenerator,
+	TemplateSync,
+	createGetEnvs,
+	nodeAdapter,
+	nextAdapter,
+	cloudflareAdapter,
+	type Adapter,
+} from "zodenvy";
 ```
 
 - `EnvParser` — parses `.env` content into typed entries.
-- `CodeGenerator` — turns entries into the generated TypeScript source.
+- `CodeGenerator` — turns entries into the generated TypeScript source (accepts an `adapter` option).
 - `TemplateSync` — keeps `.env.template` in sync with the parsed entries.
 - `createGetEnvs` — runtime factory that parses, validates and caches.
+- `nodeAdapter`, `nextAdapter`, `viteAdapter`, `astroAdapter`, `cloudflareAdapter`, `denoAdapter`, `bunAdapter` — built-in framework adapters.
+- `Adapter` — type for custom adapters; pass one to `CodeGenerator` to emit any accessor pattern.
 
 ## License
 

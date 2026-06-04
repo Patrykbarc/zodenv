@@ -1,28 +1,65 @@
 import type { EnvEntry } from "./EnvParser.js";
+import type { Adapter } from "./adapters/types.js";
+import { nodeAdapter, viteAdapter } from "./adapters/index.js";
 
 export interface GeneratorOptions {
 	envSource: "process.env" | "import.meta.env";
 	typeName: string;
 	generateGetEnvs: boolean;
+	adapter?: Adapter;
+	publicTypeName?: string;
 }
 
+const DEFAULT_PUBLIC_TYPE_NAME = "PublicEnvironmentVariables";
+
 export class CodeGenerator {
-	constructor(private options: GeneratorOptions) {}
+	private readonly adapter: Adapter;
+	private readonly publicTypeName: string;
+
+	constructor(private options: GeneratorOptions) {
+		this.adapter = options.adapter ?? this.adapterFromEnvSource(options.envSource);
+		this.publicTypeName = options.publicTypeName ?? DEFAULT_PUBLIC_TYPE_NAME;
+	}
+
+	private adapterFromEnvSource(envSource: GeneratorOptions["envSource"]): Adapter {
+		return envSource === "import.meta.env" ? viteAdapter : nodeAdapter;
+	}
+
+	private publicEntries(entries: EnvEntry[]): EnvEntry[] {
+		const prefix = this.adapter.splitPublicPrefix;
+		if (!prefix) return [];
+		return entries.filter((e) => e.key.startsWith(prefix));
+	}
 
 	generate(entries: EnvEntry[]): string {
-		const parts = [
-			this.buildHeader(),
-			"import { z } from 'zod';",
-			"",
-			this.buildEnvNames(entries),
-			"",
-			this.buildSchema(entries),
-			"",
-			this.buildTypeAlias(),
-		];
+		const parts = [this.buildHeader()];
+		if (this.adapter.imports) {
+			parts.push(...this.adapter.imports);
+		}
+		parts.push("import { z } from 'zod';", "");
+		parts.push(this.buildEnvNames(entries), "");
+		parts.push(this.buildSchema("envSchema", entries), "");
+		parts.push(this.buildTypeAlias(this.options.typeName, "envSchema"));
+
+		const publicEntries = this.publicEntries(entries);
+		if (publicEntries.length > 0) {
+			parts.push("", this.buildSchema("publicEnvSchema", publicEntries));
+			parts.push("", this.buildTypeAlias(this.publicTypeName, "publicEnvSchema"));
+		}
 
 		if (this.options.generateGetEnvs) {
-			parts.push("", this.buildGetEnvs());
+			parts.push("", this.buildAccessor("getEnvs", this.options.typeName, "envSchema", entries));
+			if (publicEntries.length > 0) {
+				parts.push(
+					"",
+					this.buildAccessor(
+						"getPublicEnvs",
+						this.publicTypeName,
+						"publicEnvSchema",
+						publicEntries,
+					),
+				);
+			}
 		}
 
 		return parts.join("\n") + "\n";
@@ -37,25 +74,39 @@ export class CodeGenerator {
 		return `export const ENV_NAMES = [${keys}] as const;`;
 	}
 
-	private buildSchema(entries: EnvEntry[]): string {
+	private buildSchema(schemaName: string, entries: EnvEntry[]): string {
 		const lines = entries.map((e) => `\t${e.key}: ${this.entryToZodExpression(e)},`);
-		return `export const envSchema = z.object({\n${lines.join("\n")}\n});`;
+		return `export const ${schemaName} = z.object({\n${lines.join("\n")}\n});`;
 	}
 
-	private buildTypeAlias(): string {
-		return `export type ${this.options.typeName} = z.infer<typeof envSchema>;`;
+	private buildTypeAlias(typeName: string, schemaName: string): string {
+		return `export type ${typeName} = z.infer<typeof ${schemaName}>;`;
 	}
 
-	private buildGetEnvs(): string {
-		const source = this.options.envSource;
-		const envAccess = source === "import.meta.env" ? "import.meta.env[name]" : "process.env[name]";
+	private buildAccessorBody(entries: EnvEntry[], schemaName: string): string {
+		const props = entries
+			.map((e) => `\t\t${e.key}: ${this.adapter.envAccessor(e.key)},`)
+			.join("\n");
+		return `\treturn ${schemaName}.parse({\n${props}\n\t});`;
+	}
 
-		return [
-			`export const getEnvs = (): ${this.options.typeName} => {`,
-			`\tconst raw = Object.fromEntries(ENV_NAMES.map((name) => [name, ${envAccess}]));`,
-			`\treturn envSchema.parse(raw);`,
-			`};`,
-		].join("\n");
+	private buildAccessor(
+		exportName: string,
+		typeName: string,
+		schemaName: string,
+		entries: EnvEntry[],
+	): string {
+		const body = this.buildAccessorBody(entries, schemaName);
+		if (this.adapter.shape === "factory") {
+			const factoryName =
+				exportName === "getEnvs" ? "createGetEnvs" : `create${capitalize(exportName)}`;
+			return [
+				`export const ${factoryName} = (env: Record<string, string | undefined>) => (): ${typeName} => {`,
+				body,
+				`};`,
+			].join("\n");
+		}
+		return [`export const ${exportName} = (): ${typeName} => {`, body, `};`].join("\n");
 	}
 
 	entryToZodExpression(entry: EnvEntry): string {
@@ -67,7 +118,6 @@ export class CodeGenerator {
 			return `z.coerce.number()`;
 		}
 
-		// string
 		if (entry.defaultValue !== undefined) {
 			return `z.string().default('${entry.defaultValue}')`;
 		}
@@ -78,4 +128,8 @@ export class CodeGenerator {
 
 		return `z.string().min(1)`;
 	}
+}
+
+function capitalize(s: string): string {
+	return s.charAt(0).toUpperCase() + s.slice(1);
 }

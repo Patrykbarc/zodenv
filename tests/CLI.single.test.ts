@@ -28,7 +28,9 @@ describe("CLI single-project mode (default)", () => {
 		expect(existsSync(outPath)).toBe(true);
 
 		const content = readFileSync(outPath, "utf-8");
-		expect(content).toContain("process.env[name]");
+		expect(content).toContain("process.env.PORT");
+		expect(content).toContain("process.env.API_URL");
+		expect(content).not.toContain("process.env[name]");
 		expect(content).toContain("'PORT'");
 		expect(content).toContain("'API_URL'");
 	});
@@ -66,7 +68,8 @@ describe("CLI single-project mode (default)", () => {
 		}).run(root);
 
 		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
-		expect(content).toContain("import.meta.env[name]");
+		expect(content).toContain("import.meta.env.API_URL");
+		expect(content).not.toContain("import.meta.env[name]");
 	});
 
 	it("reads from custom --env-file path", async () => {
@@ -143,5 +146,116 @@ describe("parseCliArgs", () => {
 
 	it("throws on unknown flag", () => {
 		expect(() => parseCliArgs(["--nope"])).toThrow();
+	});
+
+	it("parses --framework flag", () => {
+		const { options } = parseCliArgs(["--framework", "next"]);
+		expect(options.framework).toBe("next");
+	});
+
+	it("framework defaults to auto", () => {
+		const { options } = parseCliArgs([]);
+		expect(options.framework).toBe("auto");
+	});
+
+	it("throws on invalid --framework value", () => {
+		expect(() => parseCliArgs(["--framework", "ember"])).toThrow(/Invalid --framework/);
+	});
+});
+
+describe("CLI --framework flag", () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "zodenvy-fw-test-"));
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("--framework next → emits getEnvs + getPublicEnvs with static process.env access", async () => {
+		writeFileSync(join(root, ".env"), "API_KEY=k\nNEXT_PUBLIC_API_URL=https://x\n", "utf-8");
+		writeFileSync(join(root, "package.json"), JSON.stringify({ name: "demo" }), "utf-8");
+
+		await new CLI(new EnvParser(), new TemplateSync(), { framework: "next" }).run(root);
+
+		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
+		expect(content).toContain("process.env.API_KEY");
+		expect(content).toContain("process.env.NEXT_PUBLIC_API_URL");
+		expect(content).toContain("export const getEnvs");
+		expect(content).toContain("export const getPublicEnvs");
+		expect(content).toContain("publicEnvSchema");
+	});
+
+	it("--framework cloudflare → emits createGetEnvs factory", async () => {
+		writeFileSync(join(root, ".env"), "API_KEY=k\n", "utf-8");
+		writeFileSync(join(root, "package.json"), JSON.stringify({ name: "demo" }), "utf-8");
+
+		await new CLI(new EnvParser(), new TemplateSync(), { framework: "cloudflare" }).run(root);
+
+		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
+		expect(content).toContain(
+			"export const createGetEnvs = (env: Record<string, string | undefined>)",
+		);
+		expect(content).toContain("env.API_KEY");
+		expect(content).not.toMatch(/export const getEnvs = \(\):/);
+	});
+
+	it("--framework deno → Deno.env.get(...)", async () => {
+		writeFileSync(join(root, ".env"), "API_KEY=k\n", "utf-8");
+		writeFileSync(join(root, "package.json"), JSON.stringify({ name: "demo" }), "utf-8");
+
+		await new CLI(new EnvParser(), new TemplateSync(), { framework: "deno" }).run(root);
+
+		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
+		expect(content).toContain('Deno.env.get("API_KEY")');
+	});
+
+	it("auto-detects next from package.json deps", async () => {
+		writeFileSync(join(root, ".env"), "NEXT_PUBLIC_FOO=bar\n", "utf-8");
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "demo", dependencies: { next: "^14.0.0" } }),
+			"utf-8",
+		);
+
+		await new CLI(new EnvParser(), new TemplateSync()).run(root);
+
+		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
+		expect(content).toContain("process.env.NEXT_PUBLIC_FOO");
+		expect(content).toContain("getPublicEnvs");
+	});
+
+	it("auto-detects cloudflare from wrangler dep", async () => {
+		writeFileSync(join(root, ".env"), "API_KEY=k\n", "utf-8");
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "demo", devDependencies: { wrangler: "^3.0.0" } }),
+			"utf-8",
+		);
+
+		await new CLI(new EnvParser(), new TemplateSync()).run(root);
+
+		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
+		expect(content).toContain("createGetEnvs");
+		expect(content).toContain("env.API_KEY");
+	});
+
+	it("--env-source process.env still overrides to node adapter (backwards compat)", async () => {
+		writeFileSync(join(root, ".env"), "API_KEY=k\n", "utf-8");
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "demo", dependencies: { astro: "^6.0.0" } }),
+			"utf-8",
+		);
+
+		await new CLI(new EnvParser(), new TemplateSync(), {
+			envSource: "process.env",
+		}).run(root);
+
+		const content = readFileSync(join(root, "src/constants/env.generated.ts"), "utf-8");
+		expect(content).toContain("process.env.API_KEY");
+		expect(content).not.toContain("import.meta.env");
 	});
 });

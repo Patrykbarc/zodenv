@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { CodeGenerator, type GeneratorOptions } from "../src/CodeGenerator.js";
 import type { EnvEntry } from "../src/EnvParser.js";
+import {
+	nextAdapter,
+	viteAdapter,
+	astroAdapter,
+	cloudflareAdapter,
+	denoAdapter,
+	bunAdapter,
+	nodeAdapter,
+} from "../src/adapters/index.js";
 
 const defaultOptions: GeneratorOptions = {
 	envSource: "process.env",
@@ -118,22 +127,150 @@ describe("CodeGenerator.generate", () => {
 		expect(code).not.toContain("export const getEnvs");
 	});
 
-	it("includes getEnvs when generateGetEnvs: true", () => {
+	it("includes getEnvs with STATIC literal access when generateGetEnvs: true", () => {
 		const code = gen({ generateGetEnvs: true }).generate(entries);
 		expect(code).toContain("export const getEnvs");
-		expect(code).toContain("process.env[name]");
+		expect(code).toContain("process.env.API_URL");
+		expect(code).toContain("process.env.DB_PORT");
+		expect(code).toContain("process.env.DEBUG");
+		expect(code).toContain("process.env.NODE_ENV");
 	});
 
-	it("uses import.meta.env when configured", () => {
+	it("does NOT emit dynamic bracket-notation access (bundler-unfriendly)", () => {
+		const code = gen({ generateGetEnvs: true }).generate(entries);
+		expect(code).not.toContain("process.env[name]");
+		expect(code).not.toContain("Object.fromEntries");
+	});
+
+	it("uses import.meta.env when envSource configured", () => {
 		const code = gen({
 			generateGetEnvs: true,
 			envSource: "import.meta.env",
 		}).generate(entries);
-		expect(code).toContain("import.meta.env[name]");
+		expect(code).toContain("import.meta.env.API_URL");
+		expect(code).not.toContain("import.meta.env[name]");
 	});
 
 	it("snapshot — full generated file", () => {
 		const code = gen().generate(entries);
 		expect(code).toMatchSnapshot();
+	});
+});
+
+describe("CodeGenerator with adapters", () => {
+	const mixedEntries: EnvEntry[] = [
+		{ key: "API_URL", value: "x", type: "string", isOptional: false },
+		{ key: "DB_PASSWORD", value: "secret", type: "string", isOptional: false },
+		{ key: "NEXT_PUBLIC_API_URL", value: "x", type: "string", isOptional: false },
+	];
+
+	it("node adapter — process.env static access, no split", () => {
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: nodeAdapter,
+		}).generate(mixedEntries);
+		expect(code).toContain("process.env.API_URL");
+		expect(code).not.toContain("getPublicEnvs");
+		expect(code).not.toContain("publicEnvSchema");
+	});
+
+	it("next adapter — emits getEnvs + getPublicEnvs (NEXT_PUBLIC_ subset)", () => {
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: nextAdapter,
+		}).generate(mixedEntries);
+		expect(code).toContain("export const getEnvs");
+		expect(code).toContain("export const getPublicEnvs");
+		expect(code).toContain("export const publicEnvSchema");
+		expect(code).toContain("process.env.API_URL");
+		expect(code).toContain("process.env.DB_PASSWORD");
+		expect(code).toContain("process.env.NEXT_PUBLIC_API_URL");
+		// public schema only includes NEXT_PUBLIC_*
+		const publicSchemaMatch = code.match(/publicEnvSchema = z\.object\(\{([\s\S]*?)\}\)/);
+		expect(publicSchemaMatch).not.toBeNull();
+		expect(publicSchemaMatch![1]).toContain("NEXT_PUBLIC_API_URL");
+		expect(publicSchemaMatch![1]).not.toContain("DB_PASSWORD");
+		// publicEnvSchema must NOT include the non-prefixed API_URL — match line start with tab
+		expect(publicSchemaMatch![1]).not.toMatch(/^\tAPI_URL:/m);
+	});
+
+	it("vite adapter — import.meta.env + VITE_ public split", () => {
+		const entries: EnvEntry[] = [
+			{ key: "API_KEY", value: "k", type: "string", isOptional: false },
+			{ key: "VITE_API_URL", value: "x", type: "string", isOptional: false },
+		];
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: viteAdapter,
+		}).generate(entries);
+		expect(code).toContain("import.meta.env.API_KEY");
+		expect(code).toContain("import.meta.env.VITE_API_URL");
+		expect(code).toContain("export const getPublicEnvs");
+		expect(code).toContain("publicEnvSchema");
+	});
+
+	it("astro adapter — PUBLIC_ public split", () => {
+		const entries: EnvEntry[] = [
+			{ key: "SECRET", value: "s", type: "string", isOptional: false },
+			{ key: "PUBLIC_URL", value: "u", type: "string", isOptional: false },
+		];
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: astroAdapter,
+		}).generate(entries);
+		expect(code).toContain("import.meta.env.PUBLIC_URL");
+		const publicSchemaMatch = code.match(/publicEnvSchema = z\.object\(\{([\s\S]*?)\}\)/);
+		expect(publicSchemaMatch![1]).toContain("PUBLIC_URL");
+		expect(publicSchemaMatch![1]).not.toContain("SECRET");
+	});
+
+	it("cloudflare adapter — emits createGetEnvs factory, NOT getEnvs", () => {
+		const entries: EnvEntry[] = [{ key: "API_KEY", value: "k", type: "string", isOptional: false }];
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: cloudflareAdapter,
+		}).generate(entries);
+		expect(code).toContain(
+			"export const createGetEnvs = (env: Record<string, string | undefined>)",
+		);
+		expect(code).toContain("env.API_KEY");
+		expect(code).not.toMatch(/export const getEnvs = \(\):/);
+		expect(code).not.toContain("process.env");
+	});
+
+	it("deno adapter — Deno.env.get(...)", () => {
+		const entries: EnvEntry[] = [{ key: "API_KEY", value: "k", type: "string", isOptional: false }];
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: denoAdapter,
+		}).generate(entries);
+		expect(code).toContain('Deno.env.get("API_KEY")');
+	});
+
+	it("bun adapter — Bun.env.FOO", () => {
+		const entries: EnvEntry[] = [{ key: "API_KEY", value: "k", type: "string", isOptional: false }];
+		const code = new CodeGenerator({
+			...defaultOptions,
+			generateGetEnvs: true,
+			adapter: bunAdapter,
+		}).generate(entries);
+		expect(code).toContain("Bun.env.API_KEY");
+	});
+
+	it("adapter takes precedence over envSource", () => {
+		const code = new CodeGenerator({
+			envSource: "process.env",
+			typeName: "Env",
+			generateGetEnvs: true,
+			adapter: viteAdapter,
+		}).generate(mixedEntries);
+		expect(code).toContain("import.meta.env.API_URL");
+		expect(code).not.toMatch(/process\.env\.API_URL/);
 	});
 });
