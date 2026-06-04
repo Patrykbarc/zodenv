@@ -58,11 +58,11 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/patrykbarc/zodenvy.git"
+		"url": "git+https://github.com/Patrykbarc/zodenvy"
 	},
-	"homepage": "https://github.com/patrykbarc/zodenvy#readme",
+	"homepage": "https://github.com/Patrykbarc/zodenvy#readme",
 	"bugs": {
-		"url": "https://github.com/patrykbarc/zodenvy/issues"
+		"url": "https://github.com/Patrykbarc/zodenvy/issues"
 	},
 	"peerDependencies": {
 		"zod": ">=3.22.0"
